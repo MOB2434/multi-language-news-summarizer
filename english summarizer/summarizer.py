@@ -7,6 +7,7 @@ import requests
 from nltk.stem import WordNetLemmatizer
 from collections import defaultdict 
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 nltk.download('punkt')
 nltk.download('stopwords')  
@@ -28,13 +29,20 @@ class EnglishSummarizer:
         
             for element in soup.find_all(['sup', 'span', 'a'], class_=re.compile('reference|citation')):
                 element.decompose()
+
+            paragraphs = []
+            for tag in ['p', 'article', 'main', 'section']:
+                paragraphs.extend(soup.find_all(tag))
+            
+            text = ' '.join(p.get_text(' ', strip=True) for p in paragraphs)
         
             text = ' '.join(p.get_text() for p in soup.find_all(['p', 'article']))
             text = re.sub(r'\[[0-9, ]+\]|\([A-Za-z ]+[0-9]{4}\)', '', text)
             text = re.sub(r'\([^)]*\)', ' ', text)  
             text = re.sub(r'\s+', ' ', text).strip()
 
-            return text
+            return text if text else None
+        
         except Exception as e:
             print(f"Error fetching URL {url}: {str(e)}")
             return None
@@ -106,20 +114,37 @@ class EnglishSummarizer:
 
         return summary
     
-    def summarize_url(self, url, num_sentences=5):
-        text = self.extract_text(url)
-        if not text:
-            return "could not extract from URL"
+    def summarize_url(self):
+        print(" URL Summarizer - Enter a URL to summarize")
+        print("Type 'quit' to exit\n")
         
-        return self.summarize(text, num_sentences)
-    
+        while True:
+            url = input("\nEnter URL: ").strip()
+            if url.lower() in ('quit', 'exit'):
+                break
+                
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+                
+            print("\n Processing...", end=' ', flush=True)
+            text = self.extract_text(url)
+            
+            if text:
+                summary = self.summarize(text)
+                print("\n Summary:")
+                print("-" * 50)
+                print(summary)
+                print("-" * 50)
+                print(f"\nSource: {url}")
+            else:
+                print("\n Could not extract content from this URL")
+            
+            print("\n" + "=" * 50)
+
 if __name__ == "__main__":
     summarizer = EnglishSummarizer()
-    url = "https://en.wikipedia.org/wiki/Natural_language_processing"
+    summarizer.summarize_url()
+
+       
     
-    print("Fetching and summarizing URL...")
-    summary = summarizer.summarize_url(url, num_sentences=5)
     
-    print("\n=== Generated Summary ===")
-    print(summary)
-    print("\nOriginal URL:", url)
