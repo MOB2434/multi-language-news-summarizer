@@ -1,15 +1,10 @@
 import requests
 from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
-<<<<<<< HEAD
-from sklearn.metrics.pairwise import cosine_similarity
-=======
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
 import numpy as np
 import heapq
 import nltk
 from nltk.tokenize import sent_tokenize, word_tokenize
-<<<<<<< HEAD
 from nltk.corpus import stopwords
 import re
 import pandas as pd
@@ -22,14 +17,6 @@ class EnglishSummarizer:
     def __init__(self, model_path='english_model.pkl'):
         self.headers = {
             'User-Agent': 'Mozilla/5.0' 
-=======
-import re
-
-class SimpleNewsSummarizer:
-    def __init__(self):
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
         }
     
     def fetch_article(self, url):
@@ -38,12 +25,6 @@ class SimpleNewsSummarizer:
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
-<<<<<<< HEAD
-
-=======
-            
-            #eemove unnecessary elements
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
             for elem in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'figure', 'blockquote', 'ul', 'ol', 'table', 'form']):
                 elem.decompose()
 
@@ -55,7 +36,6 @@ class SimpleNewsSummarizer:
             for time_tag in soup.find_all(['time',]):
                 time_tag.decompose()
             
-<<<<<<< HEAD
             title = ""
             
             title_selectors = [
@@ -81,9 +61,6 @@ class SimpleNewsSummarizer:
                 if len(title) < 5:
                     title = "Article Summary"
 
-=======
-            #find article content
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
             article = soup.find('article') or soup.find(class_=re.compile('article|post|story|content|main|body|section'))
             
             if article:
@@ -98,23 +75,14 @@ class SimpleNewsSummarizer:
                     paragraphs.append(text)
             full_text = ' '.join(paragraphs)
             
-<<<<<<< HEAD
             text = re.sub(r'\s+', ' ', full_text)
             text = re.sub(r'\[.*?\]|\(.*?\)', '', full_text)
             
             return title.strip(), text.strip()
-=======
-            #clean text
-            text = re.sub(r'\s+', ' ', full_text)
-            text = re.sub(r'\[.*?\]|\(.*?\)', '', full_text)
-            
-            return text.strip()
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
             
         except Exception as e:
             return f"Error: {str(e)}"
     
-<<<<<<< HEAD
     def load_csv_dataset(self, csv_path, text_column='text', summary_column='summary'):
         
         print(f"Loading dataset from: {csv_path}")
@@ -295,48 +263,11 @@ class SimpleNewsSummarizer:
         except Exception as e:
             print(f"Error using trained model: {e}")
             return self.summarize(text, num_sentences)
-=======
-    def summarize(self, text, num_sentences=5):
-        if not text or text.startswith("Error"):
-            return text
-        
-        #tokenize sentences
-        sentences = sent_tokenize(text)
-        if len(sentences) <= num_sentences:
-            return ' '.join(sentences)
-        
-        clean_sentences = []
-        for sent in sentences:
-            words = word_tokenize(sent.lower())
-            words = [w for w in words if w.isalnum()]
-            clean_sentences.append(' '.join(words))
-        
-        #create TF-IDF matrix
-        vectorizer = TfidfVectorizer(stop_words='english')
-        tfidf_matrix = vectorizer.fit_transform(clean_sentences)
-        
-        #calculate sentence scores
-        sentence_scores = {}
-        for i, sent in enumerate(clean_sentences):
-            if sent.strip():
-                sentence_scores[i] = np.sum(tfidf_matrix[i].toarray())
-        
-        top_indices = heapq.nlargest(
-            num_sentences,
-            sentence_scores,
-            key=sentence_scores.get
-        )
-        top_indices.sort()
-        
-        summary = [sentences[i] for i in top_indices]
-        return ' '.join(summary)
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
     
     def summarize_url(self, url, num_sentences=5):
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
 
-<<<<<<< HEAD
         title, text = self.fetch_article(url)
     
         if text and not text.startswith("Error"):
@@ -347,20 +278,11 @@ class SimpleNewsSummarizer:
             print(f"   Original: ~{len(text.split())} words")
             print(f"   Summary: {len(summary.split())} words")
             print(f"Title: {title}\n  ")
-=======
-        text = self.fetch_article(url)
-    
-        if text and not text.startswith("Error"):
-            summary = self.summarize(text, num_sentences)
-            print(f"   Original: ~{len(text.split())} words")
-            print(f"   Summary: {len(summary.split())} words")
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
             print(f"\n   {summary}\n")
             return summary
         else:
             print(f"{text}\n")
             return text
-<<<<<<< HEAD
 
 def main():
     summarizer = EnglishSummarizer()
@@ -403,11 +325,3 @@ if __name__ == "__main__":
 
     
         
-=======
-     
-if __name__ == "__main__":
-    summarizer = SimpleNewsSummarizer()
-    url = input("\nEnter URL: ").strip()
-    if url.lower() not in ('quit', 'exit'):
-        summarizer.summarize_url(url)
->>>>>>> fe7f8caff0c8c5fa61cbc5292b447abe86b203a0
