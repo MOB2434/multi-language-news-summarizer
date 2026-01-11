@@ -1,1 +1,21 @@
+from argostranslate import translate, package
 
+print("FILE LOADED OK")
+
+def install_missing_package(from_lang, to_lang):
+    available_packages = package.get_available_packages()
+    for pkg in available_packages:
+        if pkg.from_code == from_lang and pkg.to_code == to_lang:
+            pkg.install()
+            return True
+    return False
+
+def translate_text(text, from_lang, to_lang):
+    return translate.translate(text, from_lang, to_lang)
+
+if __name__ == "__main__":
+    print("PROGRAM STARTED")
+    from_lang = input("From language code: ")
+    to_lang = input("To language code: ")
+    text = input("Text: ")
+    print(translate_text(text, from_lang, to_lang))
