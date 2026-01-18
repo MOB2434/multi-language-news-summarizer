@@ -5,6 +5,7 @@ import numpy as np
 import heapq
 import nltk
 from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.metrics.pairwise import cosine_similarity
 from nltk.corpus import stopwords
 import re
 import pandas as pd
@@ -271,15 +272,27 @@ class EnglishSummarizer:
         title, text = self.fetch_article(url)
     
         if text and not text.startswith("Error"):
-            if self.vectorizer is not None:
-                summary = self.summarize(text, num_sentences)
-                model_type = "Trained Model"
-                
+            summary = self.summarize(text, num_sentences)
+            
             print(f"   Original: ~{len(text.split())} words")
             print(f"   Summary: {len(summary.split())} words")
             print(f"Title: {title}\n  ")
             print(f"\n   {summary}\n")
-            return summary
+            
+            try:
+                filename = f"englishsummary.txt"
+                foldername = "summaries"
+                if not os.path.exists(foldername):
+                    os.makedirs(foldername)
+                filepath = os.path.join(foldername, filename)
+                content = []
+                content.append(f" {summary}\n")
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(''.join(content))
+                return filepath
+            except Exception as e:
+                print(f"Error saving summary: {e}")
+                return summary
         else:
             print(f"{text}\n")
             return text
