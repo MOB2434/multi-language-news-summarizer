@@ -10,7 +10,13 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:3000", "https://minorproject-taupe.vercel.app/"],
+        "methods": ["GET", "POST","OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 english_summarizer = None
 nepali_summarizer = None
@@ -47,9 +53,16 @@ initialize_summarizers()
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    return jsonify({
+        'message': 'Multi-language News Summarizer API',
+        'status': 'running',
+        'endpoints': {
+            '/summarize': 'POST - Summarize text or URL',
+            '/languages': 'GET - Get supported languages'
+        }
+    })
 
-@app.route('/summarize', methods=['POST'])
+@app.route('/summarizer', methods=['POST'])
 def summarize():
     try:
         data = request.json()
@@ -156,4 +169,5 @@ def get_languages():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)

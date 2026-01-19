@@ -256,9 +256,12 @@ class HindiSummarizer:
         return words
         
     def sent_tokenize(self, text):
-        sentences = re.split(r'[।॥?!]+', text)
-        return [s.strip() for s in sentences if s.strip()]
-       
+        text = re.sub(r'\s+', ' ', text).strip()
+        pattern = r'(?<![डपशकखगजच]\.)(?<![डपशकखगजच]॰)(?<!\d\.)(?<=[।।।\?\!])\s+'
+        sentences = re.split(pattern, text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        return sentences
+        
     def summarize(self, text, num_sentences=5):
         
         if not text or len(text.split()) < 10:
@@ -267,22 +270,22 @@ class HindiSummarizer:
         sentences = self.sent_tokenize(text)
         clean_sentences = []
         
-        if len(sentences) <= num_sentences:
-            return ' '.join(sentences)
-        
-        clean_sentences = []
-    
         for sentence in sentences:
-            words = self.word_tokenize(sentence.lower())
-            clean_words = [word for word in words if word.isalnum() and word not in self.hindi_stopwords]
+            words = self.word_tokenize(sentence)
+            clean_words = []
+            for word in words:
+                has_letters = any(char.isalpha() or char.isdigit() for char in word)
+                if has_letters and word not in self.hindi_stopwords:
+                    clean_words.append(word)
             clean_sentences.append(" ".join(clean_words))
-        
+           
         try:
             tfidf_vectorizer = TfidfVectorizer()
             tfidf_matrix = tfidf_vectorizer.fit_transform(clean_sentences)
             cosine_similarities = cosine_similarity(tfidf_matrix, tfidf_matrix)
             sentence_scores = cosine_similarities.sum(axis=1)
             top_sentence_indices = heapq.nlargest(num_sentences, range(len(sentence_scores)), key=sentence_scores.take)
+            top_sentence_indices.sort()
             summary = [sentences[i] for i in sorted(top_sentence_indices)]
             return " ".join(summary)
         
@@ -325,7 +328,7 @@ class HindiSummarizer:
 def main():
     summarizer = HindiSummarizer()
 
-    dataset_path = "/home/banshika/multi-language-news-summarizer/hindi summarizer/datasets" 
+    dataset_path = "/home/banshika/multi-language-news-summarizer/hindisummarizer/datasets" 
     model_path = 'hindi_model.pkl'
 
     while True:

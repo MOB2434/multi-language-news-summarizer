@@ -300,7 +300,7 @@ class EnglishSummarizer:
 def main():
     summarizer = EnglishSummarizer()
 
-    dataset_path = "/home/banshika/multi-language-news-summarizer/english summarizer/datasets" 
+    dataset_path = "/home/banshika/multi-language-news-summarizer/englishsummarizer/datasets" 
     model_path = 'english_model.pkl'
 
     while True:
