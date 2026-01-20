@@ -65,7 +65,7 @@ def home():
 @app.route('/summarizer', methods=['POST'])
 def summarize():
     try:
-        data = request.json()
+        data = request.json
 
         if not data:
             return jsonify({
