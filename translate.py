@@ -10,11 +10,7 @@ LANGS = {
     "en": "eng_Latn",
     "ne": "npi_Deva",
     "hi": "hin_Deva",
-    "fr": "fra_Latn",
-    "es": "spa_Latn",
-    "zh": "zho_Hans",
-    "ar": "arb_Arab",
-     "mai": "mai_Deva",   
+    "mai": "mai_Deva",   
     "sa": "san_Deva",    
     "bho": "bho_Deva",    
 }

@@ -1,3 +1,4 @@
+from pydoc import text
 import requests
 from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -254,13 +255,16 @@ class NepaliSummarizer:
             return False
         
     def word_tokenize(self, text):
-        words = re.findall(r'[\u0900-\u097F]+', text)
+        words = re.findall(r'[\u0900-\u097F]+|[^\s\w]|\w+', text)
         return words
         
     def sent_tokenize(self, text):
-        sentences = re.split(r'[।॥?!]+', text)
-        return [s.strip() for s in sentences if s.strip()]
-       
+        text = re.sub(r'\s+', ' ', text).strip()
+        pattern = r'(?<![डपशकखगजच]\.)(?<![डपशकखगजच]॰)(?<!\d\.)(?<=[।।।\?\!])\s+'
+        sentences = re.split(pattern, text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        return sentences
+
     def summarize(self, text, num_sentences=5):
         
         if not text or len(text.split()) < 10:
@@ -270,19 +274,21 @@ class NepaliSummarizer:
         clean_sentences = []
     
         for sentence in sentences:
-            words = self.word_tokenize(sentence.lower())
-            clean_words = [word for word in words if word.isalnum() and word not in self.nepali_stopwords]
+            words = self.word_tokenize(sentence)
+            clean_words = []
+            for word in words:
+                has_letters = any(char.isalpha() or char.isdigit() for char in word)
+                if has_letters and word not in self.nepali_stopwords:
+                    clean_words.append(word)
             clean_sentences.append(" ".join(clean_words))
-            sentences = self.sent_tokenize(text)
-            if len(sentences) <= num_sentences:
-                return ' '.join(sentences)
-        
+           
         try:
             tfidf_vectorizer = TfidfVectorizer()
             tfidf_matrix = tfidf_vectorizer.fit_transform(clean_sentences)
             cosine_similarities = cosine_similarity(tfidf_matrix, tfidf_matrix)
             sentence_scores = cosine_similarities.sum(axis=1)
             top_sentence_indices = heapq.nlargest(num_sentences, range(len(sentence_scores)), key=sentence_scores.take)
+            top_sentence_indices.sort()
             summary = [sentences[i] for i in sorted(top_sentence_indices)]
             return " ".join(summary)
         
@@ -327,7 +333,7 @@ class NepaliSummarizer:
 def main():
     summarizer = NepaliSummarizer()
 
-    dataset_path = "/home/banshika/multi-language-news-summarizer/nepali summarizer/datasets" 
+    dataset_path = "/home/banshika/multi-language-news-summarizer/nepalisummarizer/datasets" 
     model_path = 'nepali_model.pkl'
 
     while True:

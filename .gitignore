@@ -2,6 +2,8 @@ englishsummarizer/__pycache__/summary.cpython-312.pyc
 nepalisummarizer/__pycache__/summary.cpython-312.pyc
 hindisummarizer/__pycache__/summary.cpython-312.pyc
 __pycache__/main.cpython-312.pyc
+<<<<<<< HEAD
+=======
 # Python
 __pycache__/
 *.pyc
@@ -19,3 +21,4 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+>>>>>>> 05a53b3fc9029fabca21aaf87c6371391bfd73d4
