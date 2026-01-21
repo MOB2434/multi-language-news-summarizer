@@ -14,7 +14,9 @@ LANGS = {
     "es": "spa_Latn",
     "zh": "zho_Hans",
     "ar": "arb_Arab",
-    "de": "deu_Latn",
+     "mai": "mai_Deva",   
+    "sa": "san_Deva",    
+    "bho": "bho_Deva",    
 }
 
 
