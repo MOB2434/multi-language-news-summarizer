@@ -307,20 +307,6 @@ class HindiSummarizer:
             print(f"Title: {title}\n  ")
             print(f"\n   {summary}\n")
 
-            try:
-                filename = f"hindisummary.txt"
-                foldername = "summaries"
-                if not os.path.exists(foldername):
-                    os.makedirs(foldername)
-                filepath = os.path.join(foldername, filename)
-                content = []
-                content.append(f" {summary}\n")
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(''.join(content))
-                return filepath
-            except Exception as e:
-                print(f"Error saving summary: {e}")
-                return summary
         else:
             print(f"{text}\n")
             return text
