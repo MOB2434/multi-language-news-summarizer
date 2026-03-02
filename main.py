@@ -28,8 +28,6 @@ CORS(app, resources={
         "allow_headers": ["Content-Type"]
     }
 })
-db = SQLAlchemy(app)
-bcrypt = Bcrypt(app)
 
 def ensure_nltk_resources():
     data_dir = os.path.join(os.path.dirname(__file__), 'nltk_data')
@@ -288,6 +286,9 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fallback-secret-key-change-this')
+
+db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
