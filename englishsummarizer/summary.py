@@ -13,6 +13,8 @@ import os
 import glob
 from collections import defaultdict
 import pickle
+from rouge_score import rouge_scorer
+from tqdm import tqdm
 
 class EnglishSummarizer:
     def __init__(self, model_path='english_model.pkl'):
@@ -235,35 +237,82 @@ class EnglishSummarizer:
             return False
     
     def summarize(self, text, num_sentences=5):
-        
         if not text or len(text.split()) < 10:
             return text
-        
-        stop_words = set(stopwords.words('english'))
-        sentences = sent_tokenize(text)
-        clean_sentences = []
     
-        for sentence in sentences:
-            words = word_tokenize(sentence.lower())
-            clean_words = [word for word in words if word.isalnum() and word not in stop_words]
-            clean_sentences.append(" ".join(clean_words))
-            sentences = sent_tokenize(text)
-            if len(sentences) <= num_sentences:
-                return ' '.join(sentences)
+        sentences = sent_tokenize(text)
+        if len(sentences) <= num_sentences:
+            return ' '.join(sentences)
+    
+        stop_words = set(stopwords.words('english'))
+        cleaned_sentences = []
+        original_sentences = []
+    
+        for sent in sentences:
+            sent_clean = re.sub(r'[^a-zA-Z\s]', '', sent)
+            words = word_tokenize(sent_clean.lower())
+            words = [word for word in words if word not in stop_words and len(word) > 2]
+            if words:  
+                cleaned_sentences.append(' '.join(words))
+                original_sentences.append(sent)
+    
+        if len(original_sentences) <= num_sentences:
+            return ' '.join(original_sentences)
+    
+        tfidf_vectorizer = TfidfVectorizer(max_features=10000, ngram_range=(1, 3))
+        tfidf_matrix = tfidf_vectorizer.fit_transform(cleaned_sentences)
+    
+        position_scores = []
+        for i in range(len(original_sentences)):
+            if i < 3:
+                pos_score = 1.0
+            elif i > len(original_sentences) - 2:
+                pos_score = 0.8
+            else:
+                pos_score = 0.5
+            position_scores.append(pos_score)
+    
+        similarity_matrix = cosine_similarity(tfidf_matrix)
+    
+        sentence_scores = []
+        for i in range(len(original_sentences)):
+            doc_similarity = similarity_matrix[i].sum()
         
+            word_count = len(original_sentences[i].split())
+            if word_count < 5:
+                length_score = 0.3
+            elif word_count > 50:
+                length_score = 0.5
+            else:
+                length_score = 1.0
         
-        try:
-            tfidf_vectorizer = TfidfVectorizer()
-            tfidf_matrix = tfidf_vectorizer.fit_transform(clean_sentences)
-            cosine_similarities = cosine_similarity(tfidf_matrix, tfidf_matrix)
-            sentence_scores = cosine_similarities.sum(axis=1)
-            top_sentence_indices = heapq.nlargest(num_sentences, range(len(sentence_scores)), key=sentence_scores.take)
-            summary = [sentences[i] for i in sorted(top_sentence_indices)]
-            return " ".join(summary)
+            total_score = (doc_similarity * 0.5 + 
+                      position_scores[i] * 0.3 + 
+                      length_score * 0.2)
+            sentence_scores.append(total_score)
+    
+        selected_indices = []
+        for _ in range(min(num_sentences, len(original_sentences))):
+            if not selected_indices:
+                idx = np.argmax(sentence_scores)
+            else:
+                remaining_scores = sentence_scores.copy()
+                for selected in selected_indices:
+                    for i in range(len(remaining_scores)):
+                        if i not in selected_indices:
+                            penalty = similarity_matrix[i][selected] * 0.5
+                            remaining_scores[i] -= penalty
+            
+                for idx in selected_indices:
+                    remaining_scores[idx] = -np.inf
+            
+                idx = np.argmax(remaining_scores)
         
-        except Exception as e:
-            print(f"Error using trained model: {e}")
-            return self.summarize(text, num_sentences)
+            selected_indices.append(idx)
+    
+        selected_indices.sort()
+        summary = [original_sentences[i] for i in selected_indices]
+        return ' '.join(summary)
     
     def summarize_url(self, url, num_sentences=5):
         if not url.startswith(('http://', 'https://')):
@@ -282,6 +331,108 @@ class EnglishSummarizer:
         else:
             print(f"{text}\n")
             return text
+
+    def calculate_rouge_scores(self, test_data, num_sentences=3):
+        print("calculating ROUGE scores")
+        
+        scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+        
+        all_scores = {
+            'rouge1': {'precision': [], 'recall': [], 'fmeasure': []},
+            'rouge2': {'precision': [], 'recall': [], 'fmeasure': []},
+            'rougeL': {'precision': [], 'recall': [], 'fmeasure': []}
+        }
+        
+        successful = 0
+        for idx, row in tqdm(test_data.iterrows(), total=len(test_data), desc="Calculating ROUGE scores"):
+            try:
+                article = row['cleaned_text']
+                reference_summary = row['cleaned_summary']
+                
+                if pd.isna(article) or pd.isna(reference_summary) or len(article.split()) < 20:
+                    continue
+                
+                generated_summary = self.summarize(article, num_sentences)
+                
+                scores = scorer.score(reference_summary, generated_summary)
+                
+                for metric in ['rouge1', 'rouge2', 'rougeL']:
+                    all_scores[metric]['precision'].append(scores[metric].precision)
+                    all_scores[metric]['recall'].append(scores[metric].recall)
+                    all_scores[metric]['fmeasure'].append(scores[metric].fmeasure)
+                
+                successful += 1
+                
+                if idx == 0:
+                    print(f"Reference: {reference_summary[:200]}...")
+                    print(f"Generated: {generated_summary[:200]}...")
+                    print(f"ROUGE-1 F1: {scores['rouge1'].fmeasure:.4f}")
+                    print(f"ROUGE-2 F1: {scores['rouge2'].fmeasure:.4f}")
+                    print(f"ROUGE-L F1: {scores['rougeL'].fmeasure:.4f}")
+                    
+            except Exception as e:
+                print(f"Error processing sample {idx}: {e}")
+                continue
+        
+        if successful == 0:
+            print("No valid test samples found")
+            return None
+        
+        avg_scores = {}
+        for metric in ['rouge1', 'rouge2', 'rougeL']:
+            avg_scores[metric] = {
+                'precision': np.mean(all_scores[metric]['precision']),
+                'recall': np.mean(all_scores[metric]['recall']),
+                'fmeasure': np.mean(all_scores[metric]['fmeasure'])
+            }
+    
+        print(f"Tested on {successful} samples")
+        print("\n{:<10} {:<12} {:<12} {:<12}".format("Metric", "Precision", "Recall", "F1-Score"))
+        print("-"*48)
+        for metric in ['rouge1', 'rouge2', 'rougeL']:
+            print("{:<10} {:<12.4f} {:<12.4f} {:<12.4f}".format(
+                metric.upper(),
+                avg_scores[metric]['precision'],
+                avg_scores[metric]['recall'],
+                avg_scores[metric]['fmeasure']
+            ))
+        
+        return avg_scores
+
+    def evaluate_on_dataset(self, dataset_path, test_split=0.2, num_sentences=3):
+        print("Model Evaluation:")
+        
+        if os.path.isdir(dataset_path):
+            df = self.load_multiple_csvs(dataset_path)
+        else:
+            df = self.load_csv_dataset(dataset_path)
+        
+        if df is None or df.empty:
+            print("Failed to load dataset")
+            return None
+        
+        if 'cleaned_summary' not in df.columns:
+            print("No summary column found. Cannot calculate ROUGE scores.")
+            return None
+        
+        df = df.dropna(subset=['cleaned_text', 'cleaned_summary'])
+        df = df[df['cleaned_text'].str.len() > 50]  
+        df = df[df['cleaned_summary'].str.len() > 10]  
+        
+        print(f"Valid samples after cleaning: {len(df)}")
+        
+        if len(df) == 0:
+            print("No valid samples for evaluation")
+            return None
+        
+        from sklearn.model_selection import train_test_split
+        train_df, test_df = train_test_split(df, test_size=test_split, random_state=42)
+        
+        print(f"\nUsing {len(test_df)} samples for evaluation")
+        
+        rouge_scores = self.calculate_rouge_scores(test_df, num_sentences)
+        
+        return rouge_scores
 
 def main():
     summarizer = EnglishSummarizer()
