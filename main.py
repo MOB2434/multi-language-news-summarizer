@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify,url_for, redirect
+from flask import Flask, render_template, request, jsonify,url_for, redirect, flash
 from flask_cors import CORS
 import logging
 from englishsummarizer.summary import EnglishSummarizer
@@ -8,14 +8,14 @@ import nltk
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user, current_user
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import InputRequired, Length, ValidationError
+from wtforms import StringField, PasswordField, SubmitField, TextAreaField
+from wtforms.validators import InputRequired, Length, ValidationError, DataRequired
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
 import os
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import translate
-import torch
+from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ app = Flask(__name__)
 CORS(app, resources={
     r"/*": {
         "origins": ["http://localhost:3000", "https://minorproject-taupe.vercel.app/"],
-        "methods": ["GET", "POST","OPTIONS"],
+        "methods": ["GET", "POST","OPTIONS", "DELETE"],
         "allow_headers": ["Content-Type"]
     }
 })
@@ -302,6 +302,35 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False, unique=True)
     password = db.Column(db.String(80), nullable=False)
+    saved_news = db.relationship('SavedNews', backref='user', lazy=True, cascade='all, delete-orphan')
+
+class SavedNews(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    title = db.Column(db.String(500), nullable=True)
+    url = db.Column(db.String(500), nullable=True)
+    original_text = db.Column(db.Text, nullable=True)
+    summary = db.Column(db.Text, nullable=False)
+    language = db.Column(db.String(20), nullable=False)
+    num_sentences = db.Column(db.Integer, default=5)
+    translated_summary = db.Column(db.Text, nullable=True)
+    translated_title = db.Column(db.String(500), nullable=True)
+    translated_to = db.Column(db.String(20), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'url': self.url,
+            'summary': self.summary,
+            'language': self.language,
+            'num_sentences': self.num_sentences,
+            'translated_summary': self.translated_summary,
+            'translated_title': self.translated_title,
+            'translated_to': self.translated_to,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
 
 class RegisterForm(FlaskForm):
     username = StringField(validators=[
@@ -328,6 +357,17 @@ class LoginForm(FlaskForm):
 
     submit = SubmitField('Login')
 
+class SaveNewsForm(FlaskForm):
+    title = StringField(validators=[Length(max=500)], render_kw={"placeholder": "Title"})
+    url = StringField(validators=[Length(max=500)], render_kw={"placeholder": "URL"})
+    summary = TextAreaField(validators=[DataRequired()], render_kw={"placeholder": "Summary"})
+    language = StringField(validators=[DataRequired()], render_kw={"placeholder": "Language"})
+    num_sentences = StringField(render_kw={"placeholder": "Number of sentences"})
+    translated_summary = TextAreaField(render_kw={"placeholder": "Translated Summary"})
+    translated_title = StringField(render_kw={"placeholder": "Translated Title"})
+    translated_to = StringField(render_kw={"placeholder": "Translated to"})
+    submit = SubmitField('Save News')
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     form = LoginForm()
@@ -337,12 +377,13 @@ def login():
             if bcrypt.check_password_hash(user.password, form.password.data):
                 login_user(user)
                 return redirect(url_for('dashboard'))
-    return render_template('login.html', form=form)
+    return render_template('login.html', form=form, error="Invalid username or password. Please try again.")
 
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
-    return render_template('dashboard.html')
+    saved_news = SavedNews.query.filter_by(user_id=current_user.id).order_by(SavedNews.created_at.desc()).all()
+    return render_template('dashboard.html', username=current_user.username, saved_news=saved_news)
 
 @app.route('/logout', methods=['GET', 'POST'])
 @login_required
@@ -355,13 +396,93 @@ def register():
     form = RegisterForm()
 
     if form.validate_on_submit():
-        hashed_password = bcrypt.generate_password_hash(form.password.data)
+        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
         new_user = User(username=form.username.data, password=hashed_password)
-        db.session.add(new_user)
-        db.session.commit()
-        return redirect(url_for('login'))
+
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+            return redirect(url_for('login'))
+        
+        except Exception as e:
+            db.session.rollback()
+            return render_template('register.html', form=form, error="Registration failed. Please try again.")
 
     return render_template('register.html', form=form)
+
+@app.route('/save-news', methods=['POST'])
+@login_required
+def save_news():
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        saved_news = SavedNews(
+            user_id=current_user.id,
+            title=data.get('title'),
+            url=data.get('url'),
+            original_text=data.get('original_text'),
+            summary=data.get('summary'),
+            language=data.get('language', 'english'),
+            num_sentences=int(data.get('num_sentences', 5)),
+            translated_summary=data.get('translated_summary'),
+            translated_title=data.get('translated_title'),
+            translated_to=data.get('translated_to')
+        )
+        
+        db.session.add(saved_news)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'News saved successfully!',
+            'news_id': saved_news.id
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error saving news: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.route('/delete-news/<int:news_id>', methods=['DELETE'])
+@login_required
+def delete_news(news_id):
+    try:
+        news = SavedNews.query.get_or_404(news_id)
+        
+        if news.user_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        db.session.delete(news)
+        db.session.commit()
+        
+        return jsonify({'success': True, 'message': 'News deleted successfully!'})
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting news: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.route('/get-saved-news', methods=['GET'])
+@login_required
+def get_saved_news():
+    try:
+        saved_news = SavedNews.query.filter_by(user_id=current_user.id).order_by(SavedNews.created_at.desc()).all()
+        return jsonify({
+            'success': True,
+            'news': [news.to_dict() for news in saved_news]
+        })
+    except Exception as e:
+        logger.error(f"Error fetching saved news: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.cli.command('init-db')
+def init_db():
+    with app.app_context():
+        db.create_all()
+        print("Database initialized.")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
