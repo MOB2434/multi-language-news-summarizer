@@ -16,6 +16,7 @@ import os
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import translate
 from datetime import datetime
+from detector import FakeNewsDetector
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -121,6 +122,8 @@ def initialize_translator():
 
 initialize_translator()
 
+detector = FakeNewsDetector()
+
 @app.route('/summarizer', methods=['POST'])
 def summarize():
     try:
@@ -176,6 +179,11 @@ def summarize():
         title = ""
         
         if url:
+            try:
+                news_result = detector.detect(url)
+                logger.info(f"Fake news detection result: {news_result}")
+            except Exception as e:
+                logger.error(f"Fake news detection failed: {e}")
 
             logger.info(f"Summarizing URL: {url} in {language}")
             if hasattr(summarizer, 'summarize_url'):
