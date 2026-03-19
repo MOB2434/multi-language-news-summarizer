@@ -18,6 +18,7 @@ from rouge_score import rouge_scorer
 from tqdm import tqdm
 import networkx as nx
 import math
+from sklearn.metrics.pairwise import cosine_similarity
 
 class NepaliSummarizer:
     def __init__(self, model_path='nepali_model.pkl'):
@@ -31,16 +32,7 @@ class NepaliSummarizer:
         self.use_length_filter = True
         self.min_sentence_words = 8  
         self.max_sentence_words = 40 
-        self.important_words = set([
-            'प्रधानमन्त्री', 'मन्त्री', 'राष्ट्रपति', 'नेता', 'अधिकारी', 'प्रहरी', 'जनता',
-            'सरकार', 'संसद', 'कानून', 'नीति', 'योजना', 'चुनाव', 'दल', 'विधेयक', 'विकास', 'भ्रष्टाचार',
-            'भन्नु', 'हुनु', 'गर्नु', 'जानु', 'आउनु', 'रहनु', 'पर्नु', 'दिनु',
-            'आज', 'भोलि', 'हिजो', 'अहिले', 'आउँदो', 'पहिले', 'पछि', 'बर्ष',
-            'नेपाल', 'काठमाडौं', 'देश', 'राजधानी', 'गाउँ', 'सहर', 'यहाँ', 'त्यहाँ',
-            'भनाइ', 'जानकारी', 'सूचना', 'रिपोर्ट', 'समाचार', 'घटना', 'प्रदर्शन', 'आन्दोलन',
-            'ठूलो', 'सानो', 'नयाँ', 'पुरानो', 'महत्त्वपूर्ण', 'प्रमुख', 'राम्रो',
-            'धेरै', 'केही', 'सबै', 'एक', 'दुई', 'तीन'
-        ])
+        self.important_words = set()
         try:
             self.nepali_stopwords = set(stopwords.words('nepali'))
         except:
@@ -254,8 +246,8 @@ class NepaliSummarizer:
     def preprocess_text(self, text):
         if not text or pd.isna(text):
             return ""
-        
-        text = str(text).lower()
+    
+        text = str(text)  
         text = re.sub(r'[!"#$%&\'()*+,\-./:;<=>?@\[\\\]^_`{|}~]', '', text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
@@ -267,137 +259,183 @@ class NepaliSummarizer:
         for sent in sentences:
             sent = sent.strip()
             words = sent.split()
-            if 5 <= len(words) <= 100 and len(sent) > 10:
+            if 3 <= len(words) <= 100 and len(sent) > 5: 
                 cleaned_sentences.append(sent)
+        
+        if not cleaned_sentences:
+            cleaned_sentences = [s for s in sentences if len(s.strip()) > 0]
         
         return cleaned_sentences
     
     def get_word_occurrence_vector(self, sentences):
         if not sentences:
             return np.array([])
-        
+    
         word_freq = Counter()
+        sentence_words = []
         for sent in sentences:
             words = sent.split()
+            sentence_words.append(words)
             word_freq.update(words)
-        
-        min_df = max(2, int(len(sentences) * 0.1))  
-        vocab = [word for word, freq in word_freq.items() if freq >= min_df]
-        
-        vocab = vocab[:3000]  
+    
+        total_sentences = len(sentences)
+        min_df = max(2, int(total_sentences * 0.05))
+        max_df = max(min_df + 1, int(total_sentences * 0.8))
+    
+        vocab = [word for word, freq in word_freq.items() 
+            if min_df <= freq <= max_df and len(word) > 1]  
+    
+        vocab = vocab[:5000]  
         word_to_idx = {word: idx for idx, word in enumerate(vocab)}
-        
+    
+        idf = {}
+        for word in vocab:
+            doc_count = sum(1 for words in sentence_words if word in words)
+            idf[word] = math.log((total_sentences + 1) / (doc_count + 1)) + 1
+    
         vectors = []
-        for sent in sentences:
+        for words in sentence_words:
             vector = np.zeros(len(vocab))
-            words = sent.split()
             word_counts = Counter(words)
-            
+        
             for word, count in word_counts.items():
                 if word in word_to_idx:
-                    vector[word_to_idx[word]] = 1 + math.log(count)
-            
+                    tf = 1 + math.log(count)
+                    vector[word_to_idx[word]] = tf * idf[word]
+        
             vectors.append(vector)
-        
-        return np.array(vectors)
     
+        return np.array(vectors)
+
     def build_similarity_matrix(self, sentences):
-        if len(sentences) <= 1:
-            return np.array([[1.0]])
-        
         vectors = self.get_word_occurrence_vector(sentences)
         
-        if vectors.size == 0 or len(vectors) == 0:
-            return np.eye(len(sentences))
+        if vectors.size == 0:
+            return np.zeros((len(sentences), len(sentences)))
+
+        cosine_sim = cosine_similarity(vectors)
         
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        norms[norms == 0] = 1
-        vectors = vectors / norms
+        jaccard_sim = np.zeros((len(sentences), len(sentences)))
+        sentence_sets = [set(s.split()) for s in sentences]
+
+        for i in range(len(sentences)):
+            words_i = sentence_sets[i]
+            for j in range(len(sentences)):
+                words_j = sentence_sets[j]
+                if words_i and words_j:
+                    intersection = len(words_i & words_j)
+                    union = len(words_i | words_j)
+                    jaccard_sim[i][j] = intersection / union if union > 0 else 0
         
-        similarity_matrix = np.dot(vectors, vectors.T)
+        similarity_matrix = 0.6 * cosine_sim + 0.4 * jaccard_sim
         
-        threshold = 0.1  
+        non_zero = similarity_matrix[similarity_matrix > 0]
+        threshold = np.mean(non_zero) * 0.5 if len(non_zero) > 0 else 0
         similarity_matrix[similarity_matrix < threshold] = 0
         
-        np.fill_diagonal(similarity_matrix, 0)
-        
         return similarity_matrix
-    
-    def textrank(self, sentences, damping=0.85, max_iter=100, tol=1e-4):
+
+    def textrank(self, sentences, damping=0.85, max_iter=200, tol=1e-4):
         if len(sentences) <= 1:
-            return [0], [1.0]
-        
-        sim_matrix = self.build_similarity_matrix(sentences)
-        
-        if np.sum(sim_matrix) == 0:
-            return [(i, 1.0/len(sentences)) for i in range(len(sentences))], \
-                   {i: 1.0/len(sentences) for i in range(len(sentences))}
-        
-        G = nx.from_numpy_array(sim_matrix)
-        
-        scores = nx.pagerank(G, alpha=damping, max_iter=max_iter, tol=tol)
-        
-        ranked_sentences = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        
-        return ranked_sentences, scores
+            return [(0, 1.0)], {0: 1.0}
     
+        sim_matrix = self.build_similarity_matrix(sentences)
+    
+        if np.sum(sim_matrix) == 0:
+            uniform_score = 1.0/len(sentences)
+            return [(i, uniform_score) for i in range(len(sentences))], \
+                {i: uniform_score for i in range(len(sentences))}
+    
+        n = len(sentences)
+        scores = np.ones(n) / n
+        dangling_weights = np.ones(n) / n
+    
+        row_sums = sim_matrix.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        transition_matrix = sim_matrix / row_sums
+    
+        for _ in range(max_iter):
+            prev_scores = scores.copy()
+        
+            scores = (damping * np.dot(transition_matrix.T, scores) + (1 - damping) * dangling_weights)
+        
+            if np.linalg.norm(scores - prev_scores) < tol:
+                break
+    
+        scores_dict = {i: scores[i] for i in range(n)}
+        ranked = sorted(scores_dict.items(), key=lambda x: x[1], reverse=True)
+    
+        return ranked, scores_dict
+
     def calculate_position_score(self, idx, total_sentences):
         if not self.use_position_bias:
             return 1.0
-        
-        if total_sentences <= 3:
-            return 1.0 - (idx / total_sentences) * 0.2
-        if idx == 0:
-            return 1.0  
-        elif idx == 1:
-            return 0.9  
-        elif idx == 2:
-            return 0.8  
-        elif idx < total_sentences * 0.2:  
-            return 0.7
-        elif idx < total_sentences * 0.4:  
-            return 0.5
-        else:
-            return max(0.3, 0.5 - 0.2 * ((idx - 0.4*total_sentences) / (0.6*total_sentences)))
     
+        if total_sentences <= 5:
+            return 1.0 - 0.15 * idx
+    
+        position = idx / total_sentences
+    
+        if position < 0.2:
+            return 1.0 - position * 2  
+        elif position < 0.4:
+            return 0.6 - (position - 0.2) * 1.5  
+        else:
+            return max(0.2, 0.3 - (position - 0.4) * 0.25) 
+
     def calculate_length_score(self, sentence):
         if not self.use_length_filter:
             return 1.0
-            
+    
         words = sentence.split()
         word_count = len(words)
-        
-        if 12 <= word_count <= 25:
-            return 1.0 
-        elif 8 <= word_count < 12:
-            return 0.8  
-        elif 25 < word_count <= 35:
-            return 0.7  
-        elif 5 <= word_count < 8:
-            return 0.5  
-        elif 35 < word_count <= 45:
-            return 0.4  
-        else:
-            return 0.2  
     
+        if 10 <= word_count <= 20:  
+            return 1.0
+        elif 7 <= word_count < 10:
+            return 0.85
+        elif 20 < word_count <= 25:
+            return 0.85
+        elif 4 <= word_count < 7:
+            return 0.6
+        elif 25 < word_count <= 30:
+            return 0.6
+        elif 30 < word_count <= 40:
+            return 0.4
+        else:
+            return 0.2
+
     def calculate_keyword_score(self, sentence):
         words = sentence.split()
         if not words:
             return 0
         
-        important_count = 0
+        score = 0
+        total_weight = 0
+        
         for word in words:
-            if word and word[0].isupper():
-                important_count += 2  
-            elif word in self.important_words:
-                important_count += 1.5
-            elif word not in self.nepali_stopwords and len(word) > 3:
-                important_count += 1
+            word_weight = 1
+            
+            if word.istitle():
+                word_weight += 1.5
+            
+            if word in self.important_words:
+                word_weight += 1.0
+            
+            if word not in self.nepali_stopwords and len(word) > 3:
+                word_weight += 0.5
+            
+            score += word_weight
+            total_weight += 1
         
-        score = important_count / len(words)
+        base_score = score / max(total_weight, 1)
         
-        return min(score, 2.0)  # Cap at 2.0
-    
+        rare_word_count = sum(1 for w in words if len(w) > 5 and w not in self.nepali_stopwords)
+        if rare_word_count >= 2:
+            base_score *= 1.2
+        
+        return min(base_score, 2.5)
+
     def combine_scores(self, textrank_scores, sentences):
         total_sentences = len(sentences)
         
@@ -406,6 +444,8 @@ class NepaliSummarizer:
             textrank_norm = (textrank_values - textrank_values.min()) / (textrank_values.max() - textrank_values.min())
         else:
             textrank_norm = np.ones(total_sentences)
+        
+        textrank_norm = np.power(textrank_norm, 0.8)
         
         position_scores = np.array([self.calculate_position_score(i, total_sentences) for i in range(total_sentences)])
         
@@ -416,41 +456,43 @@ class NepaliSummarizer:
         if keyword_scores.max() > 0:
             keyword_scores = keyword_scores / keyword_scores.max()
         
+        avg_sentence_length = np.mean([len(sent.split()) for sent in sentences])
+        
         if total_sentences < 10:
             weights = {
-                'textrank': 0.30,
-                'position': 0.35,
+                'textrank': 0.25,
+                'position': 0.40,  
                 'length': 0.10,
                 'keywords': 0.25
             }
-        elif total_sentences < 30:
-            weights = {
-                'textrank': 0.40,
-                'position': 0.25,
-                'length': 0.15,
-                'keywords': 0.20
-            }
+        elif total_sentences < 20:
+            if avg_sentence_length > 20:
+                weights = {'textrank': 0.40, 'position': 0.25, 'length': 0.10, 'keywords': 0.25}
+            else:
+                weights = {'textrank': 0.35, 'position': 0.30, 'length': 0.15, 'keywords': 0.20}
         else:
-            weights = {
-                'textrank': 0.45,
-                'position': 0.15,
-                'length': 0.15,
-                'keywords': 0.25
-            }
+            weights = {'textrank': 0.45, 'position': 0.15, 'length': 0.15, 'keywords': 0.25}
         
         final_scores = (weights['textrank'] * textrank_norm +
-                       weights['position'] * position_scores +
-                       weights['length'] * length_scores +
-                       weights['keywords'] * keyword_scores)
+                    weights['position'] * position_scores +
+                    weights['length'] * length_scores +
+                    weights['keywords'] * keyword_scores)
         
+        final_scores += np.arange(total_sentences) * 1e-9
+        if final_scores.max() > final_scores.min():
+            final_scores = (final_scores - final_scores.min()) / (final_scores.max() - final_scores.min())
+            
         return final_scores
-    
+
     def mmr_selection(self, sentences, scores, num_sentences=5, lambda_param=None):
         if lambda_param is None:
             lambda_param = self.mmr_lambda
         
         if len(sentences) <= num_sentences:
             return list(range(len(sentences)))
+        
+        if len(sentences) > 30:
+            lambda_param = max(0.5, lambda_param - 0.1)  
         
         vectors = self.get_word_occurrence_vector(sentences)
         
@@ -481,11 +523,11 @@ class NepaliSummarizer:
                     relevance = scores[idx]
                     
                     if selected:
-                        avg_sim = np.mean([sim_matrix[idx][s] for s in selected])
+                        max_sim = np.max([sim_matrix[idx][s] for s in selected])
                     else:
-                        avg_sim = 0
+                        max_sim = 0
                     
-                    mmr = lambda_param * relevance - (1 - lambda_param) * avg_sim
+                    mmr = lambda_param * relevance - (1 - lambda_param) * max_sim
                     mmr_scores.append(mmr)
                 
                 best_idx = candidates[np.argmax(mmr_scores)]
@@ -493,43 +535,49 @@ class NepaliSummarizer:
                 candidates.remove(best_idx)
         
         return sorted(selected)
-    
+
     def summarize(self, text, num_sentences=5):
         if not text or len(text.split()) < 20:
             return text
-        
+    
         sentences = self.extract_sentences(text)
         if len(sentences) <= num_sentences:
             return " ".join(sentences)
-        
+    
+        if len(sentences) > 50:
+            num_sentences = min(num_sentences + 1, 8)
+
+        vectors = self.get_word_occurrence_vector(sentences)
+        sim_matrix = self.build_similarity_matrix(sentences)  
         ranked_sentences, scores_dict = self.textrank(sentences, damping=self.textrank_alpha)
-        
         textrank_scores = [scores_dict.get(i, 0) for i in range(len(sentences))]
-        
         combined_scores = self.combine_scores(textrank_scores, sentences)
-        
         selected_indices = self.mmr_selection(sentences, combined_scores, num_sentences)
         selected_indices.sort()
-        
         summary_sentences = [sentences[i] for i in selected_indices[:num_sentences]]
-        
+    
         first_sentence = sentences[0] if sentences else ""
         if (first_sentence and 
             self.use_position_bias and 
-            first_sentence not in summary_sentences and
-            len(summary_sentences) < num_sentences + 1):
-            
-            first_score = combined_scores[0]
-            min_selected_score = min([combined_scores[i] for i in selected_indices])
-            
-            if first_score > min_selected_score * 0.7: 
-                summary_sentences.insert(0, first_sentence)
-                summary_sentences = summary_sentences[:num_sentences]
+            first_sentence not in summary_sentences):
         
+            first_score = combined_scores[0]
+            if first_score > np.percentile(combined_scores, 70):  
+                lowest_idx = min(selected_indices, key=lambda x: combined_scores[x])
+                if combined_scores[0] > combined_scores[lowest_idx]:
+                    selected_indices.remove(lowest_idx)
+                    selected_indices.append(0)
+                    selected_indices.sort()
+                    summary_sentences = [sentences[i] for i in selected_indices[:num_sentences]]
+    
         summary = "। ".join(summary_sentences)
+    
         if summary and not summary.endswith('।'):
             summary += '।'
-        
+    
+        if summary and summary[0].isalpha():
+            summary = summary[0].upper() + summary[1:]
+    
         return summary
 
     def summarize_url(self, url, num_sentences=5):
