@@ -23,7 +23,7 @@ def translate(text: str, src_lang: str, tgt_lang: str) -> str:
 
     output = model.generate(
         **inputs,
-        forced_bos_token_id=tokenizer.lang_code_to_id[LANGS[tgt_lang]],
+        forced_bos_token_id=tokenizer.convert_tokens_to_ids(LANGS[tgt_lang]),
         max_length=256,
     )
 
