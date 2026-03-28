@@ -179,12 +179,6 @@ def summarize():
         title = ""
         
         if url:
-            try:
-                news_result = detector.detect(url)
-                logger.info(f"Fake news detection result: {news_result}")
-            except Exception as e:
-                logger.error(f"Fake news detection failed: {e}")
-
             logger.info(f"Summarizing URL: {url} in {language}")
             if hasattr(summarizer, 'summarize_url'):
                 result = summarizer.summarize_url(url, num_sentences)
@@ -198,9 +192,17 @@ def summarize():
         else:
             logger.info(f"Summarizing text in {language} ({len(text)} chars)")
             summary = summarizer.summarize(text, num_sentences)
+
+        if url:
+            news_text = detector.extract(url)
+            news_result = detector.detect(news_text)
+        else:
+            news_result = detector.detect(text)
+
         
         response = {
             'success': True,
+            'result': news_result,
             'language': language,
             'language_code': src_lang_code,
             'summary': summary,
@@ -212,7 +214,6 @@ def summarize():
                 logger.info(f"Translating summary from {src_lang_code} to {translate_to}")
                 translated_summary = translate(summary, src_lang_code, translate_to)
                 
-                # Also translate title if it exists
                 translated_title = None
                 if title:
                     translated_title = translate(title, src_lang_code, translate_to)
