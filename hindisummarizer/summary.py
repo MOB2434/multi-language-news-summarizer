@@ -21,19 +21,18 @@ import networkx as nx
 import math
 from sklearn.metrics.pairwise import cosine_similarity
 
-
 class HindiSummarizer:
     def __init__(self, model_path='hindi_model.pkl'):
         self.headers = {
             'User-Agent': 'Mozilla/5.0' 
         }
         self.trained_data = None
-        self.textrank_alpha = 0.85  
-        self.mmr_lambda = 0.5 
+        self.textrank_alpha = 0.95
+        self.mmr_lambda = 0.9 
         self.use_position_bias = True
         self.use_length_filter = True
-        self.min_sentence_words = 8  
-        self.max_sentence_words = 40 
+        self.min_sentence_words = 5  
+        self.max_sentence_words = 50 
         self.important_words = set()
         try:
             self.hindi_stopwords = set(stopwords.words('hindi'))
@@ -111,140 +110,6 @@ class HindiSummarizer:
         except Exception as e:
             return f"Error: {str(e)}"
     
-    def load_csv_dataset(self, csv_path, text_column='text', summary_column='summary'):
-        
-        print(f"Loading dataset from: {csv_path}")
-        
-        try:
-            df = pd.read_csv(csv_path)
-            print(f"Dataset loaded: {len(df)} rows")
-            print(f"Columns: {df.columns.tolist()}")
-            
-            if text_column not in df.columns:
-                print(f"Warning: '{text_column}' column not found. Available columns: {df.columns.tolist()}")
-                possible_text_cols = ['Article', 'Content']
-                for col in possible_text_cols:
-                    if col in df.columns:
-                        text_column = col
-                        print(f"Using '{text_column}' as text column")
-                        break
-            
-            if summary_column not in df.columns:
-                print(f"Warning: '{summary_column}' column not found.")
-                possible_summary_cols = ['Heading', 'Headline']
-                for col in possible_summary_cols:
-                    if col in df.columns:
-                        summary_column = col
-                        print(f"Using '{summary_column}' as summary column")
-                        break
-            
-            df['cleaned_text'] = df[text_column].apply(self.clean_dataset_text)
-            
-            if summary_column in df.columns:
-                df['cleaned_summary'] = df[summary_column].apply(self.clean_dataset_text)
-            
-            return df
-            
-        except Exception as e:
-            print(f"Error loading CSV: {e}")
-            return None
-    
-    def load_multiple_csvs(self, folder_path):
-        
-        all_data = []
-        
-        if not os.path.exists(folder_path):
-            print(f"Folder not found: {folder_path}")
-            return None
-        
-        csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
-        
-        if not csv_files:
-            print(f"No CSV files found in {folder_path}")
-            return None
-        
-        print(f"Found {len(csv_files)} CSV files:")
-        
-        for csv_file in csv_files:
-            df = self.load_csv_dataset(csv_file)
-            if df is not None and not df.empty:
-                all_data.append(df)
-                print(f"  ✓ {os.path.basename(csv_file)}: {len(df)} rows")
-        
-        if all_data:
-            combined_df = pd.concat(all_data, ignore_index=True)
-            print(f"\nTotal combined dataset: {len(combined_df)} rows")
-            return combined_df
-        
-        return None
-    
-    def clean_dataset_text(self, text):
-
-        if pd.isna(text):
-            return ""
-        
-        text = str(text)
-        text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'\[\d+\]|\(\d+\)', '', text)
-        text = re.sub(r'\s+([.,!?;:])', r'\1', text)
-        return text.strip()
-    
-    def train_from_csv(self, csv_path_or_folder, text_column='text', summary_column='summary'):
-       
-        if os.path.isdir(csv_path_or_folder):
-            df = self.load_multiple_csvs(csv_path_or_folder)
-        else:
-            df = self.load_csv_dataset(csv_path_or_folder, text_column, summary_column)
-        
-        if df is None or df.empty:
-            print("No data available for training")
-            return False
-        
-        articles = df['cleaned_text'].tolist()
-        
-        self.trained_data = {
-            'num_articles': len(articles),
-            'avg_article_length': np.mean([len(art.split()) for art in articles]),
-            'columns_used': {
-                'text': text_column,
-                'summary': summary_column if summary_column in df.columns else None
-            }
-        }
-        
-        print(f"\nTraining data processed successfully!")
-        print(f"  Articles: {self.trained_data['num_articles']}")
-        print(f"  Average article length: {self.trained_data['avg_article_length']:.0f} words")
-        
-        self.save_model('hindi_model.pkl')
-    
-        return True
-     
-    def save_model (self, filepath='hindi_model.pkl'):
-        model_data = {
-            'trained_data': self.trained_data,
-            'hindi_stopwords': self.hindi_stopwords
-        }
-        
-        with open(filepath, 'wb') as f:
-            pickle.dump(model_data, f)
-        print(f"Model saved to {filepath}")
-        return True
-    
-    def load_model(self, filepath='hindi_model.pkl'):
-        try:
-            with open(filepath, 'rb') as f:
-                model_data = pickle.load(f)
-                self.trained_data = model_data.get('trained_data', None)
-                self.hindi_stopwords = model_data.get('hindi_stopwords', self.hindi_stopwords)
-                print(f"Model loaded from {filepath}")
-                if self.trained_data:
-                    print(f"  Trained on {self.trained_data.get('num_articles', 0)} articles")
-            print(f"Model loaded from {filepath}")
-            return True
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return False
-
     def preprocess_text(self, text):
         if not text or pd.isna(text):
             return ""
@@ -256,19 +121,16 @@ class HindiSummarizer:
     
     def extract_sentences(self, text):
         text = re.sub(r'\s+', ' ', text.strip())
-        sentences = re.split(r'[।\?!]+\s*', text)
-        cleaned_sentences = []
+        sentences = re.split(r'[।!?\.]+', text)
+        
+        cleaned = []
         for sent in sentences:
             sent = sent.strip()
-            words = sent.split()
-            if 3 <= len(words) <= 100 and len(sent) > 5: 
-                cleaned_sentences.append(sent)
+            if len(sent.split()) >= 5:
+                cleaned.append(sent)
         
-        if not cleaned_sentences:
-            cleaned_sentences = [s for s in sentences if len(s.strip()) > 0]
-        
-        return cleaned_sentences
-    
+        return cleaned
+
     def get_word_occurrence_vector(self, sentences):
         if not sentences:
             return np.array([])
@@ -337,106 +199,163 @@ class HindiSummarizer:
         
         return similarity_matrix
 
-    def textrank(self, sentences, damping=0.85, max_iter=200, tol=1e-4):
-        if len(sentences) <= 1:
-            return [(0, 1.0)], {0: 1.0}
-    
-        sim_matrix = self.build_similarity_matrix(sentences)
-    
-        if np.sum(sim_matrix) == 0:
-            uniform_score = 1.0/len(sentences)
-            return [(i, uniform_score) for i in range(len(sentences))], \
-                {i: uniform_score for i in range(len(sentences))}
-    
-        n = len(sentences)
-        scores = np.ones(n) / n
-        dangling_weights = np.ones(n) / n
-    
-        row_sums = sim_matrix.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1
-        transition_matrix = sim_matrix / row_sums
-    
-        for _ in range(max_iter):
-            prev_scores = scores.copy()
-        
-            scores = (damping * np.dot(transition_matrix.T, scores) + (1 - damping) * dangling_weights)
-        
-            if np.linalg.norm(scores - prev_scores) < tol:
-                break
-    
-        scores_dict = {i: scores[i] for i in range(n)}
-        ranked = sorted(scores_dict.items(), key=lambda x: x[1], reverse=True)
-    
-        return ranked, scores_dict
-
-    def calculate_position_score(self, idx, total_sentences):
-        if not self.use_position_bias:
-            return 1.0
-    
-        if total_sentences <= 5:
-            return 1.0 - 0.15 * idx
-    
-        position = idx / total_sentences
-    
-        if position < 0.2:
-            return 1.0 - position * 2  
-        elif position < 0.4:
-            return 0.6 - (position - 0.2) * 1.5  
-        else:
-            return max(0.2, 0.3 - (position - 0.4) * 0.25) 
-
-    def calculate_length_score(self, sentence):
-        if not self.use_length_filter:
-            return 1.0
-    
-        words = sentence.split()
-        word_count = len(words)
-    
-        if 10 <= word_count <= 20:  
-            return 1.0
-        elif 7 <= word_count < 10:
-            return 0.85
-        elif 20 < word_count <= 25:
-            return 0.85
-        elif 4 <= word_count < 7:
-            return 0.6
-        elif 25 < word_count <= 30:
-            return 0.6
-        elif 30 < word_count <= 40:
-            return 0.4
-        else:
-            return 0.2
-
     def calculate_keyword_score(self, sentence):
         words = sentence.split()
         if not words:
             return 0
         
         score = 0
-        total_weight = 0
-        
         for word in words:
-            word_weight = 1
-            
-            if word.istitle():
-                word_weight += 1.5
-            
             if word in self.important_words:
-                word_weight += 1.0
-            
-            if word not in self.hindi_stopwords and len(word) > 3:
-                word_weight += 0.5
-            
-            score += word_weight
-            total_weight += 1
+                score += 1.5
+            elif word not in self.hindi_stopwords and len(word) > 2:
+                score += 1.0
+            else:
+                score += 0.2
         
-        base_score = score / max(total_weight, 1)
-        
-        rare_word_count = sum(1 for w in words if len(w) > 5 and w not in self.hindi_stopwords)
-        if rare_word_count >= 2:
-            base_score *= 1.2
-        
+        base_score = score / len(words)
         return min(base_score, 2.5)
+
+    def calculate_length_score(self, sentence):
+        word_count = len(sentence.split())
+        
+        if hasattr(self, 'trained_patterns'):
+            optimal = self.trained_patterns.get('optimal_sentence_length', 22)
+            deviation = abs(word_count - optimal) / optimal
+            
+            if deviation < 0.2:
+                return 1.0
+            elif deviation < 0.4:
+                return 0.7
+            elif deviation < 0.6:
+                return 0.4
+            else:
+                return 0.2
+        else:
+            if 10 <= word_count <= 20:
+                return 1.0
+            elif 7 <= word_count < 10 or 20 < word_count <= 25:
+                return 0.85
+            elif 4 <= word_count < 7 or 25 < word_count <= 30:
+                return 0.6
+            else:
+                return 0.2
+
+    def textrank(self, sentences):
+        n = len(sentences)
+        if n == 0:
+            return [], {}
+        
+        importance_scores = []
+        for sentence in sentences:
+            importance_scores.append(self.calculate_keyword_score(sentence))
+        
+        similarity_matrix = np.zeros((n, n))
+        
+        for i in range(n):
+            for j in range(i+1, n):
+                words_i = set(sentences[i].split())
+                words_j = set(sentences[j].split())
+                
+                if not words_i or not words_j:
+                    continue
+                
+                intersection = words_i.intersection(words_j)
+                union = words_i.union(words_j)
+                
+                if union:
+                    weighted_intersection = sum(
+                        self.word_influence_dict.get(w, 1.0) for w in intersection
+                    ) if hasattr(self, 'word_influence_dict') else len(intersection)
+                    
+                    weighted_union = sum(
+                        self.word_influence_dict.get(w, 1.0) for w in union
+                    ) if hasattr(self, 'word_influence_dict') else len(union)
+                    
+                    similarity = (weighted_intersection / weighted_union) * (importance_scores[i] + importance_scores[j]) / 2
+                    similarity_matrix[i][j] = similarity
+                    similarity_matrix[j][i] = similarity
+        
+        damping = self.textrank_alpha
+        scores = np.ones(n) / n
+        
+        for _ in range(200):
+            new_scores = np.zeros(n)
+            for i in range(n):
+                incoming_sum = 0
+                for j in range(n):
+                    if j != i and similarity_matrix[j][i] > 0:
+                        outgoing_sum = sum(similarity_matrix[j])
+                        if outgoing_sum > 0:
+                            incoming_sum += similarity_matrix[j][i] / outgoing_sum * scores[j]
+                new_scores[i] = (1 - damping) + damping * incoming_sum
+            
+            if np.sum(np.abs(new_scores - scores)) < 1e-4:
+                scores = new_scores
+                break
+            scores = new_scores
+        
+        combined_scores = scores * importance_scores
+        
+        ranked_indices = np.argsort(combined_scores)[::-1]
+        ranked_sentences = [sentences[i] for i in ranked_indices]
+        scores_dict = {i: combined_scores[i] for i in range(n)}
+        
+        return ranked_sentences, scores_dict
+
+    def combine_scores(self, textrank_scores, sentences):
+        total_sentences = len(sentences)
+        
+        if hasattr(self, 'optimal_weights'):
+            weights = self.optimal_weights
+        else:
+            weights = {'textrank': 0.35, 'position': 0.25, 'length': 0.15, 'keywords': 0.25}
+        
+        textrank_values = np.array(textrank_scores)
+        if textrank_values.max() > textrank_values.min():
+            textrank_norm = (textrank_values - textrank_values.min()) / (textrank_values.max() - textrank_values.min())
+        else:
+            textrank_norm = np.ones(total_sentences)
+        
+        position_scores = np.array([self.calculate_position_score(i, total_sentences) for i in range(total_sentences)])
+        length_scores = np.array([self.calculate_length_score(sent) for sent in sentences])
+        keyword_scores = np.array([self.calculate_keyword_score_enhanced(sent) for sent in sentences])
+        
+        if keyword_scores.max() > keyword_scores.min():
+            keyword_scores = (keyword_scores - keyword_scores.min()) / (keyword_scores.max() - keyword_scores.min())
+        
+        final_scores = (weights['textrank'] * textrank_norm +
+                    weights['position'] * position_scores +
+                    weights['length'] * length_scores +
+                    weights['keywords'] * keyword_scores)
+        
+        return final_scores
+
+    def calculate_position_score(self, idx, total_sentences):
+        if not self.use_position_bias:
+            return 1.0
+        
+        position = idx / total_sentences if total_sentences > 0 else 0
+        
+        if hasattr(self, 'trained_patterns'):
+            bias = self.trained_patterns.get('position_bias', 0.2)
+            if position < bias:
+                return 1.0 - (position / bias) * 0.3
+            elif position < 0.8:
+                return 0.7 - (position - bias) * 0.5
+            else:
+                return 0.6
+        else:
+            if position < 0.2:
+                return 1.0
+            elif position < 0.4:
+                return 0.8
+            elif position < 0.6:
+                return 0.6
+            elif position < 0.8:
+                return 0.7
+            else:
+                return 0.9
 
     def combine_scores(self, textrank_scores, sentences):
         total_sentences = len(sentences)
@@ -541,47 +460,45 @@ class HindiSummarizer:
     def summarize(self, text, num_sentences=5):
         if not text or len(text.split()) < 20:
             return text
-    
+        
         sentences = self.extract_sentences(text)
         if len(sentences) <= num_sentences:
             return " ".join(sentences)
-    
+        
         if len(sentences) > 50:
             num_sentences = min(num_sentences + 1, 8)
-
-        vectors = self.get_word_occurrence_vector(sentences)
-        sim_matrix = self.build_similarity_matrix(sentences)  
-        ranked_sentences, scores_dict = self.textrank(sentences, damping=self.textrank_alpha)
+        
+        ranked_sentences, scores_dict = self.textrank(sentences)
         textrank_scores = [scores_dict.get(i, 0) for i in range(len(sentences))]
+        
         combined_scores = self.combine_scores(textrank_scores, sentences)
+        
         selected_indices = self.mmr_selection(sentences, combined_scores, num_sentences)
         selected_indices.sort()
         summary_sentences = [sentences[i] for i in selected_indices[:num_sentences]]
-    
-        first_sentence = sentences[0] if sentences else ""
-        if (first_sentence and 
-            self.use_position_bias and 
-            first_sentence not in summary_sentences):
         
+        first_sentence = sentences[0] if sentences else ""
+        if (first_sentence and self.use_position_bias and 
+            first_sentence not in summary_sentences):
             first_score = combined_scores[0]
-            if first_score > np.percentile(combined_scores, 70):  
+            if first_score > np.percentile(combined_scores, 70):
                 lowest_idx = min(selected_indices, key=lambda x: combined_scores[x])
                 if combined_scores[0] > combined_scores[lowest_idx]:
                     selected_indices.remove(lowest_idx)
                     selected_indices.append(0)
                     selected_indices.sort()
                     summary_sentences = [sentences[i] for i in selected_indices[:num_sentences]]
-    
+        
         summary = "। ".join(summary_sentences)
-    
+        
         if summary and not summary.endswith('।'):
             summary += '।'
-    
+        
         if summary and summary[0].isalpha():
             summary = summary[0].upper() + summary[1:]
-    
+        
         return summary
-
+    
     def summarize_url(self, url, num_sentences=5):
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
@@ -649,45 +566,63 @@ class HindiSummarizer:
         return avg_scores
     
     def evaluate_on_dataset(self, dataset_path, text_column='cleaned_text', summary_column='cleaned_summary', num_sentences=5, sample_size=None):
+        from trainer import trainer
+        trainer = trainer()
+        
         if os.path.isdir(dataset_path):
-            df = self.load_multiple_csvs(dataset_path)
+            df = trainer.load_multiple_csvs(dataset_path)
         else:
-            df = self.load_csv_dataset(dataset_path, text_column, summary_column)
+            df = trainer.load_csv_dataset(dataset_path, text_column, summary_column)
         
         if df is None or df.empty:
             print("No data available for evaluation")
             return None
         
-        if 'cleaned_text' not in df.columns or 'cleaned_summary' not in df.columns:
-            print("Required columns not found in dataset")
-            return None
-
         if sample_size and sample_size < len(df):
             df = df.sample(n=sample_size, random_state=42)
-            print(f"Sampled {sample_size} articles for evaluation")
+            print(f"Evaluating on {sample_size} samples")
         
-        articles = df['cleaned_text'].tolist()
-        reference_summaries = df['cleaned_summary'].tolist()
-        
-        print(f"\nGenerating summaries for {len(articles)} articles...")
+        # Generate summaries
+        print(f"\nGenerating summaries for {len(df)} articles...")
         generated_summaries = []
         
-        for article in tqdm(articles):
-            summary = self.summarize(article, num_sentences=num_sentences)
+        for article in tqdm(df['cleaned_text']):
+            summary = self.summarize(article, num_sentences)
             generated_summaries.append(summary)
         
-        rouge_scores = self.calculate_rouge_scores(reference_summaries, generated_summaries)
-        
+        # Calculate scores
+        rouge_scores = self.calculate_rouge_scores(df['cleaned_summary'], generated_summaries)
+            
         results = {
             'rouge_scores': rouge_scores,
             'generated_summaries': generated_summaries,
-            'reference_summaries': reference_summaries,
-            'num_samples': len(articles),
-            'num_sentences': num_sentences
+            'num_sentences': num_sentences,
         }
         
         return results
-       
+    
+    def load_model(self, filepath='hindi_model.pkl'):
+        try:
+            with open(filepath, 'rb') as f:
+                model_data = pickle.load(f)
+            
+            self.trained_data = model_data.get('trained_data', None)
+            self.hindi_stopwords = model_data.get('hindi_stopwords', self.hindi_stopwords)
+            self.important_words = model_data.get('important_words', set())
+            
+            if self.trained_data:
+                self.min_sentence_words = self.trained_data.get('min_sentence_words', self.min_sentence_words)
+                self.max_sentence_words = self.trained_data.get('max_sentence_words', self.max_sentence_words)
+            
+            print(f"Model loaded from {filepath}")
+            if self.trained_data:
+                print(f"  Trained on {self.trained_data.get('num_articles', 0)} articles")
+                print(f"  Learned {self.trained_data.get('important_words_count', 0)} important words")
+            return True
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            return False
+    
 def main():
     summarizer = HindiSummarizer()
 
@@ -702,6 +637,8 @@ def main():
             'models/hindi_model.pkl',
             'hindi_model.pkl',
         ]
+        from trainer import trainer
+        trainer = trainer()
         
         model_loaded = False
         for path in possible_paths:
@@ -711,7 +648,7 @@ def main():
                     break
                 
         if not model_loaded:
-            summarizer.train_from_csv(
+            trainer.train_from_csv(
                 csv_path_or_folder=dataset_path,
                 text_column='article',
                 summary_column='summary'

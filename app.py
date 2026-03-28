@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify,url_for, redirect, flash, g
+from flask import Flask, render_template, request, jsonify,url_for, redirect, flash
 from flask_cors import CORS
 import logging
 from englishsummarizer.summary import EnglishSummarizer
@@ -15,10 +15,8 @@ from dotenv import load_dotenv
 import os
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import translate
-from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime
 from detector import FakeNewsDetector
-import jwt
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -298,68 +296,23 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fallback-secret-key-change-this')
 
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-here')
-app.config['JWT_REFRESH_TOKEN_EXPIRES'] = datetime.timedelta(hours=24)
-
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-        
-        if not token:
-            return jsonify({'message': 'Token is missing!'}), 401
-        
-        try:
-            data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
-            
-            current_user = User.query.get(data['user_id'])
-            if not current_user:
-                return jsonify({'message': 'User not found!'}), 401
-            
-            g.current_user = current_user
-            
-        except jwt.ExpiredSignatureError:
-            return jsonify({'message': 'Token has expired!'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'message': 'Invalid token!'}), 401
-        except Exception as e:
-            return jsonify({'message': f'Authentication error: {str(e)}'}), 401
-        
-        return f(*args, **kwargs)
-    
-    return decorated
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False, unique=True)
-    email = db.Column(db.String(120), nullable=True, unique=True)  
     password = db.Column(db.String(80), nullable=False)
-    betterauth_id = db.Column(db.String(100), nullable=True, unique=True) 
     saved_news = db.relationship('SavedNews', backref='user', lazy=True, cascade='all, delete-orphan')
-    
-    @staticmethod
-    def get_or_create_from_betterauth(betterauth_user):
-        user = User.query.filter_by(betterauth_id=betterauth_user['id']).first()
-        if not user:
-            user = User(
-                betterauth_id=betterauth_user['id'],
-                username=betterauth_user.get('username') or betterauth_user.get('email').split('@')[0],
-                email=betterauth_user.get('email'),
-                password=''  
-                
-            )
-            db.session.add(user)
-            db.session.commit()
-        return user
-    
+
 class SavedNews(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -388,6 +341,31 @@ class SavedNews(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class RegisterForm(FlaskForm):
+    username = StringField(validators=[
+                           InputRequired(), Length(min=4, max=50)], render_kw={"placeholder": "Username"})
+
+    password = PasswordField(validators=[
+                             InputRequired(), Length(min=8, max=80)], render_kw={"placeholder": "Password"})
+
+    submit = SubmitField('Register')
+
+    def validate_username(self, username):
+        existing_user_username = User.query.filter_by(
+            username=username.data).first()
+        if existing_user_username:
+            raise ValidationError(
+                'That username already exists. Please choose a different one.')
+
+class LoginForm(FlaskForm):
+    username = StringField(validators=[
+                           InputRequired(), Length(min=4, max=50)], render_kw={"placeholder": "Username"})
+
+    password = PasswordField(validators=[
+                             InputRequired(), Length(min=8, max=80)], render_kw={"placeholder": "Password"})
+
+    submit = SubmitField('Login')
+
 class SaveNewsForm(FlaskForm):
     title = StringField(validators=[Length(max=500)], render_kw={"placeholder": "Title"})
     url = StringField(validators=[Length(max=500)], render_kw={"placeholder": "URL"})
@@ -398,6 +376,17 @@ class SaveNewsForm(FlaskForm):
     translated_title = StringField(render_kw={"placeholder": "Translated Title"})
     translated_to = StringField(render_kw={"placeholder": "Translated to"})
     submit = SubmitField('Save News')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(username=form.username.data).first()
+        if user:
+            if bcrypt.check_password_hash(user.password, form.password.data):
+                login_user(user)
+                return redirect(url_for('dashboard'))
+    return render_template('login.html', form=form, error="Invalid username or password. Please try again.")
 
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
@@ -411,16 +400,33 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
+@ app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegisterForm()
+
+    if form.validate_on_submit():
+        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
+        new_user = User(username=form.username.data, password=hashed_password)
+
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+            return redirect(url_for('login'))
+        
+        except Exception as e:
+            db.session.rollback()
+            return render_template('register.html', form=form, error="Registration failed. Please try again.")
+
+    return render_template('register.html', form=form)
+
 @app.route('/save-news', methods=['POST'])
-@token_required  
+@login_required
 def save_news():
     try:
         data = request.get_json()
         
         if not data:
             return jsonify({'success': False, 'error': 'No data provided'}), 400
-        
-        current_user = g.current_user
         
         saved_news = SavedNews(
             user_id=current_user.id,
@@ -432,10 +438,7 @@ def save_news():
             num_sentences=int(data.get('num_sentences', 5)),
             translated_summary=data.get('translated_summary'),
             translated_title=data.get('translated_title'),
-            translated_to=data.get('translated_to'),
-            is_fake=data.get('is_fake'),
-            fake_confidence=data.get('fake_confidence'),
-            real_confidence=data.get('real_confidence')
+            translated_to=data.get('translated_to')
         )
         
         db.session.add(saved_news)
@@ -444,144 +447,44 @@ def save_news():
         return jsonify({
             'success': True,
             'message': 'News saved successfully!',
-            'news_id': saved_news.id,
-            'saved_news': saved_news.to_dict()
-        }), 201
+            'news_id': saved_news.id
+        })
         
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error saving news: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/get-saved-news', methods=['GET'])
-@token_required
-def get_saved_news():
-    try:
-        current_user = g.current_user
-        
-        saved_news = SavedNews.query.filter_by(
-            user_id=current_user.id
-        ).order_by(SavedNews.created_at.desc()).all()
-        
-        return jsonify({
-            'success': True,
-            'news': [news.to_dict() for news in saved_news],
-            'count': len(saved_news)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error fetching saved news: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
+    
 @app.route('/delete-news/<int:news_id>', methods=['DELETE'])
-@token_required
+@login_required
 def delete_news(news_id):
     try:
-        current_user = g.current_user
-        
         news = SavedNews.query.get_or_404(news_id)
         
         if news.user_id != current_user.id:
-            return jsonify({
-                'success': False, 
-                'error': 'Unauthorized - This news does not belong to you'
-            }), 403
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         
         db.session.delete(news)
         db.session.commit()
         
-        return jsonify({
-            'success': True, 
-            'message': 'News deleted successfully!',
-            'deleted_id': news_id
-        })
+        return jsonify({'success': True, 'message': 'News deleted successfully!'})
         
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error deleting news: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/news/<int:news_id>', methods=['GET'])
-@token_required
-def get_news_details(news_id):
+    
+@app.route('/get-saved-news', methods=['GET'])
+@login_required
+def get_saved_news():
     try:
-        current_user = g.current_user
-        
-        news = SavedNews.query.get_or_404(news_id)
-        
-        if news.user_id != current_user.id:
-            return jsonify({
-                'success': False,
-                'error': 'Unauthorized'
-            }), 403
-        
+        saved_news = SavedNews.query.filter_by(user_id=current_user.id).order_by(SavedNews.created_at.desc()).all()
         return jsonify({
             'success': True,
-            'news': news.to_dict()
+            'news': [news.to_dict() for news in saved_news]
         })
-        
     except Exception as e:
-        logger.error(f"Error fetching news details: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/update-news/<int:news_id>', methods=['PUT'])
-@token_required
-def update_news(news_id):
-    try:
-        current_user = g.current_user
-        data = request.get_json()
-        
-        news = SavedNews.query.get_or_404(news_id)
-        
-        if news.user_id != current_user.id:
-            return jsonify({
-                'success': False,
-                'error': 'Unauthorized'
-            }), 403
-        
-        if 'title' in data:
-            news.title = data['title']
-        if 'notes' in data:  
-            news.notes = data['notes']
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'News updated successfully!',
-            'news': news.to_dict()
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error updating news: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/toggle-bookmark/<int:news_id>', methods=['POST'])
-@token_required
-def toggle_bookmark(news_id):
-    try:
-        current_user = g.current_user
-        
-        news = SavedNews.query.get_or_404(news_id)
-        
-        if news.user_id != current_user.id:
-            return jsonify({
-                'success': False,
-                'error': 'Unauthorized'
-            }), 403
-        
-        news.is_bookmarked = not getattr(news, 'is_bookmarked', False)
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'is_bookmarked': news.is_bookmarked
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error toggling bookmark: {e}")
+        logger.error(f"Error fetching saved news: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
     
 @app.cli.command('init-db')

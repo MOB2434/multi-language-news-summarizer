@@ -1,8 +1,14 @@
 import os
+from turtle import pd
+from tqdm.asyncio import tqdm
+from summary import EnglishSummarizer
+import numpy as np
+from sklearn.model_selection import train_test_split
 from summary import EnglishSummarizer
 
-def quick_evaluate():
-    summarizer = EnglishSummarizer()
+summarizer = EnglishSummarizer()
+
+def quick_evaluate():   
     
     model_path = 'english_model.pkl'
     possible_paths = [
@@ -10,14 +16,16 @@ def quick_evaluate():
             'models/english_model.pkl',
             'english_model.pkl',
         ]
-    
+    from trainer import trainer
+    trainer = trainer()
+
     for path in possible_paths:
         if os.path.exists(path):
-            if summarizer.load_model(path):  
+            if trainer.load_model(path):  
                 rouge_scores = summarizer.evaluate_on_dataset(
                     dataset_path="/home/banshika/multi-language-news-summarizer/englishsummarizer/datasets",
                     test_split=0.2,
-                    num_sentences=3
+                    num_sentences=5
                 )  
 
                 if rouge_scores:

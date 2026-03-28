@@ -3,7 +3,6 @@ from summary import NepaliSummarizer
 
 def quick_evaluate():
     summarizer = NepaliSummarizer()
-    
     model_path = 'nepali_model.pkl'
     possible_paths = [
             model_path,
@@ -14,15 +13,13 @@ def quick_evaluate():
     for path in possible_paths:
         if os.path.exists(path):
             if summarizer.load_model(path):  
-                sample_size = input("Enter sample size (or press Enter for all): ").strip()
-                sample_size = int(sample_size) if sample_size else None
             
                 results = summarizer.evaluate_on_dataset(
                 dataset_path="/home/banshika/multi-language-news-summarizer/nepalisummarizer/datasets",
-                text_column='text',
+                text_column='article',      
                 summary_column='summary',
-                num_sentences=5,
-                sample_size=sample_size
+                num_sentences=8,
+                sample_size=100
                 )
 
                 for metric, scores in results['rouge_scores'].items():

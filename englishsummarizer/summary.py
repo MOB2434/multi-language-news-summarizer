@@ -1,8 +1,9 @@
+import pickle
+
 import requests
 from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
-import heapq
 import nltk
 from nltk.tokenize import sent_tokenize, word_tokenize
 from sklearn.metrics.pairwise import cosine_similarity
@@ -12,15 +13,21 @@ import pandas as pd
 import os
 import glob
 from collections import defaultdict
-import pickle
 from rouge_score import rouge_scorer
-from tqdm import tqdm
+from tqdm.asyncio import tqdm
+import heapq
 
 class EnglishSummarizer:
     def __init__(self, model_path='english_model.pkl'):
         self.headers = {
             'User-Agent': 'Mozilla/5.0' 
         }
+        self.ml_model = None
+        self.scaler = None
+        self.vectorizer = None
+        
+        if os.path.exists(model_path):
+            self.load_model(model_path)
     
     def fetch_article(self, url):
         try:
@@ -86,155 +93,67 @@ class EnglishSummarizer:
         except Exception as e:
             return f"Error: {str(e)}"
     
-    def load_csv_dataset(self, csv_path, text_column='text', summary_column='summary'):
-        
-        print(f"Loading dataset from: {csv_path}")
-        
-        try:
-            df = pd.read_csv(csv_path)
-            print(f"Dataset loaded: {len(df)} rows")
-            print(f"Columns: {df.columns.tolist()}")
-            
-            if text_column not in df.columns:
-                print(f"Warning: '{text_column}' column not found. Available columns: {df.columns.tolist()}")
-                possible_text_cols = ['article','description']
-                for col in possible_text_cols:
-                    if col in df.columns:
-                        text_column = col
-                        print(f"Using '{text_column}' as text column")
-                        break
-            
-            if summary_column not in df.columns:
-                print(f"Warning: '{summary_column}' column not found.")
-                possible_summary_cols = [ 'highlights', 'title']
-                for col in possible_summary_cols:
-                    if col in df.columns:
-                        summary_column = col
-                        print(f"Using '{summary_column}' as summary column")
-                        break
-            
-            df['cleaned_text'] = df[text_column].apply(self.clean_dataset_text)
-            
-            if summary_column in df.columns:
-                df['cleaned_summary'] = df[summary_column].apply(self.clean_dataset_text)
-            
-            return df
-            
-        except Exception as e:
-            print(f"Error loading CSV: {e}")
-            return None
-    
-    def load_multiple_csvs(self, folder_path):
-        
-        all_data = []
-        
-        if not os.path.exists(folder_path):
-            print(f"Folder not found: {folder_path}")
-            return None
-        
-        csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
-        
-        if not csv_files:
-            print(f"No CSV files found in {folder_path}")
-            return None
-        
-        print(f"Found {len(csv_files)} CSV files:")
-        
-        for csv_file in csv_files:
-            df = self.load_csv_dataset(csv_file)
-            if df is not None and not df.empty:
-                all_data.append(df)
-                print(f"  ✓ {os.path.basename(csv_file)}: {len(df)} rows")
-        
-        if all_data:
-            combined_df = pd.concat(all_data, ignore_index=True)
-            print(f"\nTotal combined dataset: {len(combined_df)} rows")
-            return combined_df
-        
-        return None
-    
-    def clean_dataset_text(self, text):
-
-        if pd.isna(text):
-            return ""
-        
-        text = str(text)
-        text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'\[\d+\]|\(\d+\)', '', text)
-        text = re.sub(r'\s+([.,!?;:])', r'\1', text)
-        return text.strip()
-    
-    def train_from_csv(self, csv_path_or_folder, text_column='text', summary_column='summary'):
-       
-        if os.path.isdir(csv_path_or_folder):
-            df = self.load_multiple_csvs(csv_path_or_folder)
-        else:
-            df = self.load_csv_dataset(csv_path_or_folder, text_column, summary_column)
-        
-        if df is None or df.empty:
-            print("No data available for training")
-            return False
-        
-        articles = df['cleaned_text'].tolist()
-        
-        all_text = ' '.join(articles)
-        
-        print("\nTraining TF-IDF vectorizer")
-        self.vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=5000, 
-            ngram_range=(1, 2) 
-        )
-        
-        self.vectorizer.fit(articles)
-        print(f"Vocabulary size: {len(self.vectorizer.vocabulary_)}")
-        
-        self.trained_data = {
-            'num_articles': len(articles),
-            'avg_article_length': np.mean([len(art.split()) for art in articles]),
-            'vocab_size': len(self.vectorizer.vocabulary_),
-            'columns_used': {
-                'text': text_column,
-                'summary': summary_column if summary_column in df.columns else None
-            }
-        }
-        
-        print("\nTraining completed successfully!")
-        print(f"  • Articles trained on: {self.trained_data['num_articles']}")
-        print(f"  • Average article length: {self.trained_data['avg_article_length']:.0f} words")
-        print(f"  • Vocabulary size: {self.trained_data['vocab_size']}")
-        
-        self.save_model('english_model.pkl')
-
-        return True
-     
-    def save_model (self, filepath='english_model.pkl'):
-
-        if self.vectorizer is not None:
-            with open(filepath, 'wb') as f:
-                pickle.dump({
-                    'vectorizer': self.vectorizer,
-                    'trained_data': self.trained_data
-                }, f)
-            print(f"Model saved to {filepath}")
-            return True
-        else:
-            print("No trained model to save")
-            return False
-    
     def load_model(self, filepath='english_model.pkl'):
-
         try:
             with open(filepath, 'rb') as f:
                 data = pickle.load(f)
-                self.vectorizer = data['vectorizer']
-                self.trained_data = data['trained_data']
+                self.vectorizer = data.get('vectorizer')
+                self.ml_model = data.get('ml_model')
+                self.scaler = data.get('scaler')
+                self.trained_data = data.get('trained_data')
             print(f"Model loaded from {filepath}")
-            print(f"  • Trained on {self.trained_data['num_articles']} articles")
             return True
         except Exception as e:
             print(f"Error loading model: {e}")
             return False
+    
+    def _extract_sentence_features(self, sentences):
+        """
+        Extract features for each sentence
+        """
+        features = []
+        stop_words = set(stopwords.words('english'))
+        
+        for i, sent in enumerate(sentences):
+            sent_lower = sent.lower()
+            words = word_tokenize(sent_lower)
+            words_clean = [w for w in words if w.isalpha() and w not in stop_words]
+            
+            # Position features
+            position_score = 1.0 if i < 3 else (0.8 if i > len(sentences) - 2 else 0.5)
+            
+            # Length features
+            word_count = len(words)
+            char_count = len(sent)
+            
+            # Content features
+            title_words = set()
+            # Estimate title as first few words of first sentence
+            if i == 0:
+                title_words = set(words_clean[:5])
+            
+            title_overlap = len(set(words_clean) & title_words) / max(1, len(title_words))
+            
+            # Lexical features
+            unique_ratio = len(set(words_clean)) / max(1, len(words_clean))
+            avg_word_length = np.mean([len(w) for w in words_clean]) if words_clean else 0
+            
+            # NER-like features (capitalized words)
+            capitalized_ratio = sum(1 for w in words if w[0].isupper()) / max(1, len(words))
+            
+            features.append([
+                position_score,
+                min(word_count / 50, 1.0),  # Normalized length
+                min(char_count / 300, 1.0),  # Normalized char length
+                title_overlap,
+                unique_ratio,
+                min(avg_word_length / 10, 1.0),
+                capitalized_ratio,
+                len(words_clean) / max(1, len(words)),  # Content word ratio
+                i / max(1, len(sentences))  # Relative position
+            ])
+        
+        return features
     
     def summarize(self, text, num_sentences=5):
         if not text or len(text.split()) < 10:
@@ -258,7 +177,24 @@ class EnglishSummarizer:
     
         if len(original_sentences) <= num_sentences:
             return ' '.join(original_sentences)
-    
+
+        from trainer import trainer
+        trainer = trainer()
+
+        if self.ml_model is not None and self.scaler is not None:
+            try:
+                features = self._extract_sentence_features(sentences)
+                X_scaled = self.scaler.transform(features)
+                scores = self.ml_model.predict(X_scaled)
+                
+                # Select top sentences
+                top_indices = heapq.nlargest(num_sentences, range(len(scores)), scores.__getitem__)
+                top_indices.sort()
+                
+                return ' '.join([sentences[i] for i in top_indices])
+            except Exception as e:
+                print(f"ML prediction failed, falling back to TF-IDF: {e}") 
+
         tfidf_vectorizer = TfidfVectorizer(max_features=10000, ngram_range=(1, 3))
         tfidf_matrix = tfidf_vectorizer.fit_transform(cleaned_sentences)
     
@@ -331,7 +267,7 @@ class EnglishSummarizer:
         else:
             print(f"{text}\n")
             return text
-
+    
     def calculate_rouge_scores(self, test_data, num_sentences=3):
         print("calculating ROUGE scores")
         
@@ -401,11 +337,13 @@ class EnglishSummarizer:
 
     def evaluate_on_dataset(self, dataset_path, test_split=0.2, num_sentences=3):
         print("Model Evaluation:")
-        
+        from trainer import trainer
+        trainer = trainer()
+
         if os.path.isdir(dataset_path):
-            df = self.load_multiple_csvs(dataset_path)
+            df = trainer.load_multiple_csvs(dataset_path)
         else:
-            df = self.load_csv_dataset(dataset_path)
+            df = trainer.load_csv_dataset(dataset_path)
         
         if df is None or df.empty:
             print("Failed to load dataset")
@@ -433,7 +371,7 @@ class EnglishSummarizer:
         rouge_scores = self.calculate_rouge_scores(test_df, num_sentences)
         
         return rouge_scores
-
+    
 def main():
     summarizer = EnglishSummarizer()
 
@@ -448,15 +386,17 @@ def main():
             'models/english_model.pkl',
             'english_model.pkl',
         ]
-        
+        from trainer import trainer
+        trainer = trainer()
+
         model_loaded = False
         for path in possible_paths:
             if os.path.exists(path):
-                if summarizer.load_model(path):
+                if trainer.load_model(path):
                     model_loaded = True
                     break
         if not model_loaded:
-            summarizer.train_from_csv(
+            trainer.train_from_csv(
                 csv_path_or_folder=dataset_path,
                 text_column='article',
                 summary_column='summary'
